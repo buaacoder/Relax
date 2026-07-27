@@ -10,10 +10,47 @@ round-trips against it. Pure-tensor, no distributed / GPU.
 
 from __future__ import annotations
 
+import importlib
+import sys
+from types import ModuleType
+
 import pytest
 import torch
 
-from relax.backends.megatron.cp_utils import gdn_cp_slice, gdn_reassemble_full, slice_with_cp
+
+def _load_cp_utils():
+    try:
+        return importlib.import_module("relax.backends.megatron.cp_utils"), False
+    except ModuleNotFoundError as exc:
+        if exc.name != "megatron":
+            raise
+
+    megatron = ModuleType("megatron")
+    core = ModuleType("megatron.core")
+    mpu = ModuleType("megatron.core.mpu")
+    core.mpu = mpu
+    megatron.core = core
+
+    sys.modules["megatron"] = megatron
+    sys.modules["megatron.core"] = core
+    sys.modules["megatron.core.mpu"] = mpu
+    try:
+        return importlib.import_module("relax.backends.megatron.cp_utils"), True
+    finally:
+        sys.modules.pop("megatron.core.mpu", None)
+        sys.modules.pop("megatron.core", None)
+        sys.modules.pop("megatron", None)
+
+
+_cp_utils, _CP_UTILS_STUBBED = _load_cp_utils()
+gdn_cp_slice = _cp_utils.gdn_cp_slice
+gdn_reassemble_full = _cp_utils.gdn_reassemble_full
+slice_with_cp = _cp_utils.slice_with_cp
+
+
+def teardown_module():
+    if _CP_UTILS_STUBBED:
+        sys.modules.pop("relax.backends.megatron.cp_utils", None)
 
 
 def _full_cu_seqlens(local_lens: list[int], cp_size: int) -> torch.Tensor:
